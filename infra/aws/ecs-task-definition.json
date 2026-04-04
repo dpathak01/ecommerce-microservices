@@ -1,0 +1,46 @@
+{
+  "family": "ecommerce-gateway",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/ecommerceTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "gateway",
+      "image": "ghcr.io/owner/repo/gateway:latest",
+      "portMappings": [
+        {
+          "containerPort": 4000,
+          "hostPort": 4000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "PORT", "value": "4000" },
+        { "name": "AUTH_SERVICE_URL", "value": "http://auth-service.internal:4001" },
+        { "name": "USER_SERVICE_URL", "value": "http://user-service.internal:4002" },
+        { "name": "PRODUCT_SERVICE_URL", "value": "http://product-service.internal:4003" },
+        { "name": "CART_SERVICE_URL", "value": "http://cart-service.internal:4004" },
+        { "name": "ORDER_SERVICE_URL", "value": "http://order-service.internal:4005" },
+        { "name": "REDIS_URL", "value": "redis://elasticache.internal:6379" }
+      ],
+      "secrets": [
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "arn:aws:ssm:ap-south-1:123456789012:parameter/ecommerce/JWT_SECRET"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ecommerce-gateway",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+

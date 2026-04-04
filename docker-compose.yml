@@ -1,0 +1,200 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      AUTH_SERVICE_URL: http://auth-service:4001
+      USER_SERVICE_URL: http://user-service:4002
+      PRODUCT_SERVICE_URL: http://product-service:4003
+      CART_SERVICE_URL: http://cart-service:4004
+      ORDER_SERVICE_URL: http://order-service:4005
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: super-secret-change-me
+    depends_on:
+      - auth-service
+      - user-service
+      - product-service
+      - cart-service
+      - order-service
+      - redis
+    networks:
+      - ecommerce
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    environment:
+      SERVICE_NAME: auth-service
+      SERVICE_PORT: 4001
+      DATABASE_URL: postgresql://postgres:postgres@auth-db:5432/auth_db?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: super-secret-change-me
+      JWT_REFRESH_SECRET: super-refresh-secret-change-me
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+    depends_on:
+      - auth-db
+      - redis
+    networks:
+      - ecommerce
+
+  user-service:
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    environment:
+      SERVICE_NAME: user-service
+      SERVICE_PORT: 4002
+      DATABASE_URL: postgresql://postgres:postgres@user-db:5432/user_db?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - user-db
+      - redis
+    networks:
+      - ecommerce
+
+  product-service:
+    build:
+      context: .
+      dockerfile: services/product-service/Dockerfile
+    environment:
+      SERVICE_NAME: product-service
+      SERVICE_PORT: 4003
+      DATABASE_URL: postgresql://postgres:postgres@product-db:5432/product_db?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - product-db
+      - redis
+    networks:
+      - ecommerce
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: services/cart-service/Dockerfile
+    environment:
+      SERVICE_NAME: cart-service
+      SERVICE_PORT: 4004
+      DATABASE_URL: postgresql://postgres:postgres@cart-db:5432/cart_db?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - cart-db
+      - redis
+    networks:
+      - ecommerce
+
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+    environment:
+      SERVICE_NAME: order-service
+      SERVICE_PORT: 4005
+      DATABASE_URL: postgresql://postgres:postgres@order-db:5432/order_db?schema=public
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    depends_on:
+      - order-db
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce
+
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: auth_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce
+
+  user-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: user_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce
+
+  product-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: product_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - product-db-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce
+
+  cart-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cart_db
+    ports:
+      - "5436:5432"
+    volumes:
+      - cart-db-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce
+
+  order-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: order_db
+    ports:
+      - "5437:5432"
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - ecommerce
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - ecommerce
+
+volumes:
+  auth-db-data:
+  user-db-data:
+  product-db-data:
+  cart-db-data:
+  order-db-data:
+
+networks:
+  ecommerce:
+    driver: bridge
+

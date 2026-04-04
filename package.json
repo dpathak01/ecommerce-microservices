@@ -1,0 +1,23 @@
+{
+  "name": "ecommerce-microservices",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "gateway",
+    "services/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "npm run dev --workspace gateway",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate --workspaces --if-present",
+    "prisma:migrate": "npm run prisma:migrate --workspaces --if-present"
+  },
+  "devDependencies": {
+    "prisma": "^7.6.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.6.0"
+  }
+}

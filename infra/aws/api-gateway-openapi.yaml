@@ -1,0 +1,21 @@
+openapi: 3.0.1
+info:
+  title: ecommerce-api-gateway
+  version: "1.0"
+paths:
+  /graphql:
+    post:
+      x-amazon-apigateway-integration:
+        type: http_proxy
+        httpMethod: POST
+        uri: https://gateway.example.com/graphql
+      responses:
+        "200":
+          description: GraphQL proxied response
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
