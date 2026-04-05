@@ -12,6 +12,12 @@ The system models a marketplace workflow similar to Amazon or Zomato-style platf
 - order placement and asynchronous order notifications
 - a single GraphQL BFF for frontend clients
 
+Project docs:
+
+- `README.md`: setup, run, and API usage
+- `dataflow.md`: full architecture, request flow, and file responsibility guide
+- `CONTRIBUTOR_FLOW.md`: short onboarding map for new contributors
+
 ## 2. Architecture Explanation
 
 ### High-level architecture
