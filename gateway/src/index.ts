@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
+import type { Logger } from "pino";
 import pinoHttp from "pino-http";
 import Redis from "ioredis";
 import { ApolloServer } from "@apollo/server";
@@ -7,10 +9,29 @@ import { expressMiddleware } from "@as-integrations/express5";
 import { ApolloServerPluginLandingPageLocalDefault } from "@apollo/server/plugin/landingPage/default";
 import { env } from "./config/env";
 import { logger } from "./config/logger";
+import type { GraphQLContext } from "./graphql/context";
 import { buildLoaders } from "./graphql/loaders";
 import { resolvers } from "./graphql/resolvers";
 import { typeDefs } from "./graphql/schemas/typeDefs";
 import { getAuthContext } from "./middleware/auth";
+import {
+  getGraphQLOperationName,
+  getHeaderValue,
+  REQUEST_ID_HEADER,
+  type RequestMetadata
+} from "./observability/request";
+
+type GatewayRequestState = {
+  auth: ReturnType<typeof getAuthContext>;
+  logger: Logger;
+  requestMetadata: RequestMetadata;
+};
+
+type GatewayRequest = express.Request & {
+  id: string;
+  log: Logger;
+  requestState?: GatewayRequestState;
+};
 
 async function bootstrap() {
   const app = express();
@@ -23,7 +44,51 @@ async function bootstrap() {
 
   app.use(cors());
   app.use(express.json());
-  app.use(pinoHttp({ logger }));
+  app.use(
+    pinoHttp({
+      logger,
+      genReqId: (request, response) => {
+        const incomingRequestId = getHeaderValue(request.headers[REQUEST_ID_HEADER]);
+        const requestId = incomingRequestId ?? randomUUID();
+        response.setHeader(REQUEST_ID_HEADER, requestId);
+        return requestId;
+      }
+    })
+  );
+  app.use((request, response, next) => {
+    const gatewayRequest = request as GatewayRequest;
+    const auth = getAuthContext(gatewayRequest);
+    const requestMetadata: RequestMetadata = {
+      requestId: gatewayRequest.id,
+      operationName: getGraphQLOperationName(request.body),
+      userId: auth.userId,
+      userRole: auth.role
+    };
+    const requestLogger = gatewayRequest.log.child(requestMetadata);
+    const startedAt = process.hrtime.bigint();
+
+    gatewayRequest.requestState = {
+      auth,
+      logger: requestLogger,
+      requestMetadata
+    };
+
+    response.on("finish", () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      requestLogger.info(
+        {
+          ...requestMetadata,
+          method: request.method,
+          path: request.path,
+          statusCode: response.statusCode,
+          durationMs: Number(durationMs.toFixed(2))
+        },
+        "Gateway request completed"
+      );
+    });
+
+    next();
+  });
   app.use((request, response, next) => {
     const key = request.ip || request.socket.remoteAddress || "unknown";
     const now = Date.now();
@@ -66,10 +131,32 @@ async function bootstrap() {
   app.use(
     "/graphql",
     expressMiddleware(apolloServer, {
-      context: async ({ req }) => ({
-        auth: getAuthContext(req),
-        loaders: buildLoaders()
-      })
+      context: async ({ req }) => {
+        const gatewayRequest = req as GatewayRequest;
+        const requestState = gatewayRequest.requestState ?? {
+          auth: getAuthContext(gatewayRequest),
+          logger: gatewayRequest.log.child({
+            requestId: gatewayRequest.id,
+            operationName: getGraphQLOperationName(gatewayRequest.body)
+          }),
+          requestMetadata: {
+            requestId: gatewayRequest.id,
+            operationName: getGraphQLOperationName(gatewayRequest.body)
+          }
+        };
+
+        const context: GraphQLContext = {
+          auth: requestState.auth,
+          loaders: buildLoaders({
+            logger: requestState.logger,
+            requestMetadata: requestState.requestMetadata
+          }),
+          logger: requestState.logger,
+          requestMetadata: requestState.requestMetadata
+        };
+
+        return context;
+      }
     })
   );
 

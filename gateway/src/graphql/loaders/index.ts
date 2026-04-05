@@ -1,6 +1,6 @@
 import DataLoader from "dataloader";
 import { env } from "../../config/env";
-import { http } from "../../utils/http";
+import { type DownstreamRequestContext, http } from "../../utils/http";
 
 export type UserProfile = {
   id: string;
@@ -22,13 +22,13 @@ export type Product = {
   isActive: boolean;
 };
 
-export function buildLoaders() {
+export function buildLoaders(requestContext: DownstreamRequestContext) {
   return {
     userLoader: new DataLoader<string, UserProfile | null>(async (ids) => {
       const users = await http<UserProfile[]>(`${env.USER_SERVICE_URL}/users/bulk`, {
         method: "POST",
         body: JSON.stringify({ ids })
-      });
+      }, requestContext);
       const mapped = new Map(users.map((user) => [user.authUserId, user]));
       return ids.map((id) => mapped.get(id) ?? null);
     }),
@@ -36,7 +36,7 @@ export function buildLoaders() {
       const products = await http<Product[]>(`${env.PRODUCT_SERVICE_URL}/products/bulk`, {
         method: "POST",
         body: JSON.stringify({ ids })
-      });
+      }, requestContext);
       const mapped = new Map(products.map((product) => [product.id, product]));
       return ids.map((id) => mapped.get(id) ?? null);
     })

@@ -367,3 +367,10 @@ ecommerce-microservices/
 - Redis is used with a cache-aside pattern and explicit invalidation on writes.
 - RabbitMQ is used for `order.created` notifications.
 - Each service is independently runnable and owns its own Prisma schema plus migration files.
+
+## Author
+
+- Deepak Pathak
+- Instagram: https://www.instagram.com/deepakpathak513/
+- Facebook: https://www.facebook.com/deepakpathak1991/
+- LinkedIn: https://www.linkedin.com/in/deepak~pathak/

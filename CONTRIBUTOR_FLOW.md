@@ -45,6 +45,7 @@ Most features follow this path:
 
 ```text
 GraphQL request
+  -> gateway request metadata created
   -> gateway resolver
   -> REST service route
   -> controller
@@ -61,6 +62,12 @@ Quick meaning of each layer:
 - `controller`: validates/parses requests and returns responses
 - `service`: business logic, caching, side effects
 - `repository`: database queries only
+
+Observability note:
+
+- The gateway generates or accepts `x-request-id`.
+- The gateway propagates `x-request-id`, `x-operation-name`, `x-user-id`, and `x-user-role` to downstream services when available.
+- Each service uses the propagated request id in its own logs, which makes one GraphQL request searchable across gateway and services.
 
 ## 4. What Each Service Owns
 
@@ -159,8 +166,27 @@ When a write happens, the service usually deletes the affected cache key and rel
 - The gateway uses DataLoader for batched `user` and `product` lookups.
 - This prevents N+1 calls when GraphQL returns nested orders, cart items, or related entities.
 - If you add a nested GraphQL field that triggers repeated lookups, consider adding a loader.
+- The gateway also logs total request duration and each downstream service-call duration.
 
-## 9. Safe Places To Change Code
+## 9. Debugging Slow Requests
+
+Use this order when a GraphQL request feels slow:
+
+1. Find the gateway log entry for the request.
+2. Copy the `requestId`.
+3. Search the same `requestId` in service logs.
+4. Compare gateway `durationMs` with downstream service `durationMs`.
+5. Follow the slowest service into its controller, service, repository, Redis usage, and database path.
+
+Most useful log fields:
+
+- `requestId`
+- `operationName`
+- `userId`
+- `service`
+- `durationMs`
+
+## 10. Safe Places To Change Code
 
 Most normal feature work happens in:
 
@@ -172,7 +198,7 @@ Most normal feature work happens in:
 
 Avoid editing generated Prisma client files in `src/generated/prisma`.
 
-## 10. Rule Of Thumb
+## 11. Rule Of Thumb
 
 - Change the owning service if you are changing stored data or business rules.
 - Change the gateway if you are changing how the client consumes combined data.

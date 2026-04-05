@@ -17,6 +17,9 @@ Authorization: Bearer <accessToken returned by login or register>
 
 - `createProduct` and `updateProduct` are not available in GraphQL yet.
 - Product creation currently exists only in the internal product REST service, not in the gateway GraphQL schema.
+- The gateway now generates or accepts `x-request-id` and returns it in the response headers.
+- If you send `x-request-id` yourself, the same value is propagated to the downstream REST services.
+- If you send an operation name, the gateway propagates it downstream as `x-operation-name`.
 - The current seeded product IDs in this environment are:
   - `86fe47e5-36c8-4e9b-9bf7-931eff09fb16` for `Noise Cancelling Headphones`
   - `c586871e-7ff0-4eb9-a962-7faa63c76fd2` for `Running Shoes`
@@ -33,6 +36,7 @@ Authorization: Bearer <accessToken returned by login or register>
 7. Run `cart`
 8. Run `checkout`
 9. Run `orders`
+10. Repeat one request with a custom `x-request-id` and trace it in the logs
 
 ## Mutations
 
@@ -354,8 +358,51 @@ Use this in the Headers panel after login:
 
 ```json
 {
-  "Authorization": "Bearer <accessToken returned by login or register>"
+  "Authorization": "Bearer <accessToken returned by login or register>",
+  "x-request-id": "debug-checkout-001"
 }
+```
+
+## Observability Testing
+
+Use these checks to confirm request correlation is working:
+
+1. Send a GraphQL request with a custom `x-request-id`.
+2. Confirm the gateway response includes the same `x-request-id`.
+3. Search gateway logs for that `requestId`.
+4. Search service logs for the same `requestId`.
+5. Compare gateway and downstream `durationMs` values.
+
+Expected log behavior:
+
+- The gateway logs `Gateway request completed`.
+- The gateway logs `Downstream service request completed` for each internal REST call.
+- Each service logs `Service request started` and `Service request completed`.
+- All of those logs share the same `requestId`.
+
+## Example cURL With Custom Request ID
+
+```bash
+curl -X POST http://localhost:4000/graphql \
+  -H 'content-type: application/json' \
+  -H 'x-request-id: debug-products-001' \
+  -d '{
+    "query": "query GetProducts { products { id name price } }",
+    "operationName": "GetProducts"
+  }'
+```
+
+Authenticated example:
+
+```bash
+curl -X POST http://localhost:4000/graphql \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer <accessToken>' \
+  -H 'x-request-id: debug-cart-001' \
+  -d '{
+    "query": "query GetCart { cart { id userId items { id productId quantity } } }",
+    "operationName": "GetCart"
+  }'
 ```
 
 ## Current GraphQL Limitations

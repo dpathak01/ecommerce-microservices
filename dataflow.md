@@ -57,6 +57,7 @@ Core idea:
 - Each service owns its own database schema and business logic.
 - Redis is used as a cache in read-heavy services.
 - `order-service` publishes an `order.created` event to RabbitMQ after an order is stored.
+- The gateway also creates or accepts a correlation id and propagates request metadata to downstream services.
 
 ## 2. Runtime Architecture
 
@@ -67,9 +68,12 @@ The gateway is the BFF (Backend for Frontend):
 - exposes `/graphql`
 - validates environment variables
 - extracts JWT auth context from the request
+- generates or accepts `x-request-id`
+- attaches request metadata to the logger and GraphQL context
 - applies a simple in-memory rate limit
 - resolves GraphQL operations by calling internal REST services
 - batches repeated `user` and `product` lookups through DataLoader
+- logs total gateway duration and per-service downstream call duration
 
 ### Service responsibilities
 
@@ -161,14 +165,23 @@ For authenticated GraphQL operations such as `me`, `cart`, `orders`, `addCartIte
 
 1. Client sends `Authorization: Bearer <token>` to the gateway.
 2. Gateway middleware reads and verifies the JWT locally using `JWT_SECRET`.
-3. Gateway stores `{ userId, email, role, token }` in GraphQL context.
-4. Resolvers call `requireAuth(...)` for protected operations.
-5. Resolver uses `context.auth.userId` to call downstream services.
+3. Gateway generates or reuses `x-request-id`.
+4. Gateway stores `{ userId, email, role, token }` in GraphQL context.
+5. Gateway stores request metadata such as `requestId`, `operationName`, `userId`, and `userRole`.
+6. Resolvers call `requireAuth(...)` for protected operations.
+7. Resolver uses `context.auth.userId` to call downstream services.
+8. Gateway propagates these headers to internal services:
+   - `x-request-id`
+   - `x-operation-name`
+   - `x-user-id`
+   - `x-user-role`
+9. Each service logs using the same request id for cross-service tracing.
 
 Important implementation detail:
 
 - The gateway does not call `auth-service` on every request.
 - It validates the JWT itself inside `gateway/src/middleware/auth.ts`.
+- The propagated user metadata is for correlation and debugging. Authorization still happens in gateway code.
 
 ### 3.5 Product browsing flow
 
@@ -274,6 +287,7 @@ Execution path:
 12. Gateway calls `DELETE /cart/:userId/clear` on `cart-service`.
 13. Cart items are deleted and the empty cart is returned.
 14. Gateway returns the created order to the client.
+15. The full cross-service flow can be traced in logs by the shared `requestId`.
 
 Important design detail:
 
@@ -317,6 +331,8 @@ Responsibilities:
 - connects to Redis for health visibility
 - adds CORS and JSON middleware
 - attaches `pino-http` logging
+- generates or accepts `x-request-id`
+- captures request metadata like operation name and authenticated user info
 - applies an in-memory per-IP rate limiter
 - starts Apollo Server
 - attaches GraphQL context with auth info and DataLoaders
@@ -344,6 +360,7 @@ Responsibilities:
 - enforces authentication for protected operations
 - coordinates multi-service workflows like register and checkout
 - resolves nested fields like `CartItem.product` and `Order.user`
+- forwards request metadata through the GraphQL context to downstream calls
 
 This file contains the most important cross-service business flow in the entire repo.
 
@@ -356,6 +373,7 @@ Responsibilities:
 - batches `user-service` lookups using `/users/bulk`
 - batches `product-service` lookups using `/products/bulk`
 - preserves request-local caching during one GraphQL request
+- reuses the same request metadata for batched downstream calls
 
 Use case:
 
@@ -381,6 +399,8 @@ Responsibilities:
 
 - sends JSON requests to internal services
 - sets `content-type: application/json`
+- propagates `x-request-id`, `x-operation-name`, `x-user-id`, and `x-user-role`
+- logs downstream latency with service name, method, path, status, and `durationMs`
 - throws helpful errors for non-2xx responses
 - returns parsed JSON bodies
 
@@ -416,7 +436,7 @@ Starts the Fastify server.
 
 ### `services/auth-service/src/app.ts`
 
-Builds the app, registers `/auth/*` routes, and handles validation/unhandled errors.
+Builds the app, registers `/auth/*` routes, handles validation/unhandled errors, and logs propagated request metadata from gateway headers.
 
 ### `services/auth-service/src/routes/auth.routes.ts`
 
@@ -499,7 +519,7 @@ Starts the service process.
 
 ### `services/user-service/src/app.ts`
 
-Registers routes and converts known business errors such as `User not found` into HTTP 404.
+Registers routes, converts known business errors such as `User not found` into HTTP 404, and logs propagated request metadata.
 
 ### `services/user-service/src/routes/user.routes.ts`
 
@@ -568,7 +588,7 @@ Starts the service process.
 
 ### `services/product-service/src/app.ts`
 
-Registers routes and handles `Product not found` as a 404.
+Registers routes, handles `Product not found` as a 404, and logs propagated request metadata.
 
 ### `services/product-service/src/routes/product.routes.ts`
 
@@ -640,7 +660,7 @@ Starts the service process.
 
 ### `services/cart-service/src/app.ts`
 
-Registers routes and handles shared validation errors.
+Registers routes, handles shared validation errors, and logs propagated request metadata.
 
 ### `services/cart-service/src/routes/cart.routes.ts`
 
@@ -717,7 +737,7 @@ Starts the HTTP server and also starts the RabbitMQ notification consumer.
 
 ### `services/order-service/src/app.ts`
 
-Registers routes and handles validation/not-found errors.
+Registers routes, handles validation/not-found errors, and logs propagated request metadata.
 
 ### `services/order-service/src/routes/order.routes.ts`
 
@@ -779,7 +799,41 @@ Use case of each model:
 
 Caches user order history under `orders:<userId>`.
 
-## 10. Data Ownership by Service
+## 10. Observability And Correlation
+
+Request correlation works like this:
+
+```text
+Client
+  -> GraphQL Gateway
+      -> requestId created or reused
+      -> operationName extracted
+      -> auth resolved
+      -> downstream headers propagated
+  -> REST Services
+      -> Fastify uses x-request-id as request id
+      -> logs include requestId, operationName, userId, userRole
+```
+
+Key fields:
+
+- `requestId`: primary correlation id across gateway and services
+- `operationName`: GraphQL operation name when the client sends one
+- `userId`: authenticated user id when available
+- `userRole`: authenticated role when available
+- `durationMs`: elapsed time for gateway requests and downstream service calls
+
+How to debug a slow request:
+
+1. Find `Gateway request completed` in gateway logs.
+2. Note `requestId` and total `durationMs`.
+3. Search `Downstream service request completed` with the same `requestId`.
+4. Compare the downstream durations.
+5. Inspect the slowest service with the same `requestId`.
+
+This gives you log-based distributed tracing even without OpenTelemetry.
+
+## 11. Data Ownership by Service
 
 This is important for contributors so boundaries stay clear.
 
@@ -795,7 +849,7 @@ A good rule when making changes:
 - If the change is about how data is stored, start in the owning service.
 - If the change is about how clients consume combined data, start in the gateway.
 
-## 11. Shared Infrastructure Files
+## 12. Shared Infrastructure Files
 
 ### `docker-compose.yml`
 
@@ -825,7 +879,7 @@ Deployment scaffolding for API Gateway and ECS-style production hosting.
 
 Infrastructure notes for containerized deployment approaches.
 
-## 12. Redis and Cache Strategy
+## 13. Redis and Cache Strategy
 
 Current cache usage:
 
@@ -842,7 +896,7 @@ Pattern used:
 - store fresh value with TTL
 - invalidate affected keys after writes
 
-## 13. Important Contributor Notes
+## 14. Important Contributor Notes
 
 ### The gateway is the orchestrator
 
@@ -868,6 +922,10 @@ Instead:
 
 If a new GraphQL field needs repeated entity lookups, add a loader or reuse an existing one. That keeps the API from making one REST call per nested row.
 
+### Observability now follows the request across services
+
+When you add a new gateway-to-service call, make sure it goes through the shared HTTP helper so request headers and timing logs continue to propagate automatically.
+
 ### Generated Prisma files are not the place for app logic
 
 The `src/generated/prisma` folders are generated code. Most contributor changes should happen in:
@@ -878,7 +936,7 @@ The `src/generated/prisma` folders are generated code. Most contributor changes 
 - `repositories`
 - `prisma/schema.prisma`
 
-## 14. Best Starting Points for New Contributors
+## 15. Best Starting Points for New Contributors
 
 If you want to understand the full system quickly, read in this order:
 
@@ -895,7 +953,7 @@ If you want to understand the full system quickly, read in this order:
 5. `services/order-service/src/queues/rabbitmq.ts`
 6. `docker-compose.yml`
 
-## 15. Short Summary
+## 16. Short Summary
 
 In one sentence:
 

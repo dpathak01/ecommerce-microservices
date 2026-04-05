@@ -1,17 +1,7 @@
+import type { GraphQLContext } from "../context";
 import { env } from "../../config/env";
 import { requireAuth } from "../../middleware/auth";
 import { http } from "../../utils/http";
-import { GatewayLoaders } from "../loaders";
-
-type Context = {
-  auth: {
-    userId?: string;
-    email?: string;
-    role?: string;
-    token?: string;
-  };
-  loaders: GatewayLoaders;
-};
 
 type CartResponse = {
   id: string;
@@ -30,30 +20,36 @@ type OrderResponse = {
 
 export const resolvers = {
   Query: {
-    me: async (_parent: unknown, _args: unknown, context: Context) => {
+    me: async (_parent: unknown, _args: unknown, context: GraphQLContext) => {
       requireAuth(context.auth);
       return context.loaders.userLoader.load(context.auth.userId);
     },
-    products: async () => http(`${env.PRODUCT_SERVICE_URL}/products`),
-    product: async (_parent: unknown, args: { id: string }, context: Context) =>
+    products: async (_parent: unknown, _args: unknown, context: GraphQLContext) =>
+      http(`${env.PRODUCT_SERVICE_URL}/products`, undefined, context),
+    product: async (_parent: unknown, args: { id: string }, context: GraphQLContext) =>
       context.loaders.productLoader.load(args.id),
-    cart: async (_parent: unknown, _args: unknown, context: Context) => {
+    cart: async (_parent: unknown, _args: unknown, context: GraphQLContext) => {
       requireAuth(context.auth);
-      return http<CartResponse>(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}`);
+      return http<CartResponse>(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}`, undefined, context);
     },
-    orders: async (_parent: unknown, _args: unknown, context: Context) => {
+    orders: async (_parent: unknown, _args: unknown, context: GraphQLContext) => {
       requireAuth(context.auth);
-      return http<OrderResponse[]>(`${env.ORDER_SERVICE_URL}/orders/user/${context.auth.userId}`);
+      return http<OrderResponse[]>(`${env.ORDER_SERVICE_URL}/orders/user/${context.auth.userId}`, undefined, context);
     }
   },
   Mutation: {
-    register: async (_parent: unknown, args: { input: { email: string; password: string; name: string } }) => {
+    register: async (
+      _parent: unknown,
+      args: { input: { email: string; password: string; name: string } },
+      context: GraphQLContext
+    ) => {
       const authPayload = await http<{ accessToken: string; refreshToken: string; userId: string; email: string }>(
         `${env.AUTH_SERVICE_URL}/auth/register`,
         {
           method: "POST",
           body: JSON.stringify(args.input)
-        }
+        },
+        context
       );
 
       await http(`${env.USER_SERVICE_URL}/users`, {
@@ -63,30 +59,34 @@ export const resolvers = {
           email: args.input.email,
           name: args.input.name
         })
-      });
+      }, context);
 
       return authPayload;
     },
-    login: async (_parent: unknown, args: { email: string; password: string }) =>
+    login: async (_parent: unknown, args: { email: string; password: string }, context: GraphQLContext) =>
       http(`${env.AUTH_SERVICE_URL}/auth/login`, {
         method: "POST",
         body: JSON.stringify(args)
-      }),
-    refreshToken: async (_parent: unknown, args: { refreshToken: string }) =>
+      }, context),
+    refreshToken: async (_parent: unknown, args: { refreshToken: string }, context: GraphQLContext) =>
       http(`${env.AUTH_SERVICE_URL}/auth/refresh`, {
         method: "POST",
         body: JSON.stringify(args)
-      }),
-    addCartItem: async (_parent: unknown, args: { input: { productId: string; quantity: number } }, context: Context) => {
+      }, context),
+    addCartItem: async (
+      _parent: unknown,
+      args: { input: { productId: string; quantity: number } },
+      context: GraphQLContext
+    ) => {
       requireAuth(context.auth);
       return http<CartResponse>(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}/items`, {
         method: "POST",
         body: JSON.stringify(args.input)
-      });
+      }, context);
     },
-    checkout: async (_parent: unknown, args: { input: { shippingAddress: string } }, context: Context) => {
+    checkout: async (_parent: unknown, args: { input: { shippingAddress: string } }, context: GraphQLContext) => {
       requireAuth(context.auth);
-      const cart = await http<CartResponse>(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}`);
+      const cart = await http<CartResponse>(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}`, undefined, context);
       const products = await Promise.all(
         cart.items.map((item) => context.loaders.productLoader.load(item.productId))
       );
@@ -102,26 +102,25 @@ export const resolvers = {
             unitPrice: products[index]?.price ?? 0
           }))
         })
-      });
+      }, context);
 
       await http(`${env.CART_SERVICE_URL}/cart/${context.auth.userId}/clear`, {
         method: "DELETE"
-      });
+      }, context);
 
       return order;
     }
   },
   CartItem: {
-    product: (parent: { productId: string }, _args: unknown, context: Context) =>
+    product: (parent: { productId: string }, _args: unknown, context: GraphQLContext) =>
       context.loaders.productLoader.load(parent.productId)
   },
   Order: {
-    user: (parent: { userId: string }, _args: unknown, context: Context) =>
+    user: (parent: { userId: string }, _args: unknown, context: GraphQLContext) =>
       context.loaders.userLoader.load(parent.userId)
   },
   OrderItem: {
-    product: (parent: { productId: string }, _args: unknown, context: Context) =>
+    product: (parent: { productId: string }, _args: unknown, context: GraphQLContext) =>
       context.loaders.productLoader.load(parent.productId)
   }
 };
-
